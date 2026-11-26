@@ -27,3 +27,13 @@ jobs:
       - run: ruff check .
       - run: mypy
       - run: python -m build
+      - name: Smoke test installed CLI from wheel
+        # Installs the built wheel into a fresh venv and runs it from outside the
+        # checkout, so a broken entry point or missing package files fail here.
+        # Only --help is invoked: no DNS queries are made.
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke-venv"
+          "$RUNNER_TEMP/smoke-venv/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke-venv/bin/dns-sentinel" --help
