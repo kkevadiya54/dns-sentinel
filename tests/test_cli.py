@@ -30,3 +30,12 @@ def test_cli_nonzero_for_error_findings(
     )
     assert cli.main() == 1
     assert "spf" in capsys.readouterr().out
+
+
+def test_cli_version_matches_package_version(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["dns-sentinel", "--version"])
+    with pytest.raises(SystemExit, match="0"):
+        cli.main()
+    assert capsys.readouterr().out.strip() == f"dns-sentinel {cli.__version__}"

@@ -72,7 +72,7 @@ Browse [beginner-friendly issues](https://github.com/kkevadiya54/dns-sentinel/is
 
 ## Project status
 
-Alpha software. Version 0.1.0 is available on PyPI. Community growth and protocol coverage remain ongoing work; see [ROADMAP.md](ROADMAP.md) for the staged plan and limits.
+Alpha software. Version 0.1.1 is available on PyPI. Community growth and protocol coverage remain ongoing work; see [ROADMAP.md](ROADMAP.md) for the staged plan and limits.
 
 ## License
 
