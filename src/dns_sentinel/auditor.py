@@ -7,6 +7,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from dns import name
 import dns.exception
 import dns.resolver
 
@@ -287,40 +288,58 @@ class Auditor:
             "One DMARC policy with valid version and policy tags was found.",
             tuple(policies),
         )
-
     def _check_caa(self, name: str) -> Finding:
-        rows, error = self._query(name, "CAA")
-        if error and error != "no records":
-            return Finding("caa", "error", "warning", f"Could not query CAA records: {error}")
-        if not rows:
-            return Finding(
-                "caa",
-                "fail",
-                "warning",
-                "No CAA records found; any CA may be authorized by default.",
-            )
-        for row in rows:
-            parts = row.split(None, 2)
-            if (
-                len(parts) != 3
-                or not parts[0].isdigit()
-                or int(parts[0]) > 255
-                or parts[1].lower() not in {"issue", "issuewild", "iodef"}
-            ):
+        current = name
+        while True:
+            rows, error = self._query(current, "CAA")
+
+            if error and error != "no records":
                 return Finding(
                     "caa",
-                    "fail",
                     "error",
-                    "Malformed CAA record (expected flags tag value).",
+                    "warning",
+                    f"Could not query CAA records for {current} "
+                    f"while checking {name}: {error}",
+                )
+
+            if rows:
+                for row in rows:
+                    parts = row.split(None, 2)
+                    if (
+                        len(parts) != 3
+                        or not parts[0].isdigit()
+                        or int(parts[0]) > 255
+                        or parts[1].lower() not in {"issue", "issuewild", "iodef"}
+                    ):
+                        return Finding(
+                            "caa",
+                            "fail",
+                            "error",
+                            f"Malformed CAA record found at {current} "
+                            f"while checking {name} (expected flags tag value).",
+                            tuple(rows),
+                        )
+
+                return Finding(
+                    "caa",
+                    "pass",
+                    "info",
+                    f"CAA records found for {name} at policy owner {current}.",
                     tuple(rows),
                 )
+
+            if current == ".":
+                break
+
+            current = current.split(".", 1)[1] if "." in current else "."
+
         return Finding(
             "caa",
-            "pass",
-            "info",
-            "CAA records are present and have recognized tags and flags.",
-            tuple(rows),
+            "fail",
+            "warning",
+            f"No CAA records found for {name} from the queried name to the DNS root.",
         )
+
 
     def _check_mx(self, name: str) -> Finding:
         rows, error = self._query(name, "MX")

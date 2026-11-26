@@ -149,6 +149,55 @@ def test_dns_errors_do_not_abort_other_checks() -> None:
     assert findings[4].status == "pass"
 
 
+def test_caa_uses_parent_policy() -> None:
+    data = {
+        ("sub.example.com", "CAA"): [],
+        ("example.com", "CAA"): ['0 issue "letsencrypt.org"'],
+    }
+    result = auditor(data).audit("sub.example.com").findings[2]
+
+    assert result.status == "pass"
+    assert "sub.example.com" in result.message
+    assert "example.com" in result.message
+
+
+def test_caa_no_policy_to_root() -> None:
+    class TrackingResolver(Resolver):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.caa_queried: list[str] = []
+
+        def resolve(self, name: str, kind: str, **kwargs: object) -> Answer:
+            if kind == "CAA":
+                self.caa_queried.append(name)
+            return Answer([])
+
+    resolver = TrackingResolver()
+    result = Auditor(resolver=resolver).audit("sub.example.com").findings[2]
+
+    assert result.status == "fail"
+    assert resolver.caa_queried == [
+        "sub.example.com",
+        "example.com",
+        "com",
+        ".",
+    ]
+    assert "DNS root" in result.message
+
+
+def test_caa_parent_dns_error() -> None:
+    data = {
+        ("sub.example.com", "CAA"): [],
+        ("example.com", "CAA"): dns.exception.Timeout(),
+    }
+    result = auditor(data).audit("sub.example.com").findings[2]
+
+    assert result.status == "error"
+    assert result.severity == "warning"
+    assert "example.com" in result.message
+    assert "sub.example.com" in result.message
+
+
 @pytest.mark.parametrize(
     "failure", [dns.resolver.LifetimeTimeout(timeout=1, errors=[]), dns.resolver.NoNameservers()]
 )
