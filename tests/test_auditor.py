@@ -55,6 +55,40 @@ def test_spf_rejects_malformed_mechanism() -> None:
     a = auditor({("example.com", "TXT"): ['"v=spf1 ip4:not-an-ip -all"']})
     assert a.audit("example.com").findings[0].status == "fail"
 
+@pytest.mark.parametrize(
+    "mechanism,expected",
+    [
+        # Valid literal domains
+        ("a:example.com", "pass"),
+        ("a:mail.example.com", "pass"),
+        ("mx:example.com", "pass"),
+        ("mx:mail.example.com", "pass"),
+        ("include:example.com", "pass"),
+        ("exists:example.com", "pass"),
+
+        # Empty labels and consecutive dots
+        ("a:a..example.com", "fail"),
+        ("mx:a..example.com", "fail"),
+        ("include:a..example.com", "fail"),
+        ("exists:a..example.com", "fail"),
+
+        # Leading and trailing empty labels
+        ("a:.example.com", "fail"),
+        ("mx:example.com.", "pass"),
+        ("include:.example.com", "fail"),
+        ("exists:example.com.", "pass"),
+        ("a:example.com.", "pass"),
+        ("include:example.com.", "pass"),
+        ],
+)
+def test_spf_literal_domain_validation(mechanism: str, expected: str) -> None:
+    policy = f"v=spf1 {mechanism} -all"
+    result = auditor(
+        {("example.com", "TXT"): [f'"{policy}"']}
+    ).audit("example.com").findings[0]
+
+    assert result.status == expected
+
 
 @pytest.mark.parametrize(
     "policy,expected",

@@ -59,6 +59,26 @@ def normalize_domain(domain: str) -> str:
     return ascii_name
 
 
+
+def _is_valid_literal_domain(domain: str) -> bool:
+    """Validate literal SPF domains. Macro expansion is unsupported."""
+    if domain.endswith("."):
+        domain = domain[:-1]
+    if len(domain) > 253 or "." not in domain:
+        return False
+
+    labels = domain.split(".")
+    return all(
+        bool(
+            label
+            and len(label) <= 63
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+        )
+        for label in labels
+    )
+
+
+
 class Auditor:
     """Read-only DNS auditor. DNSSEC results report records only, never cryptographic validity."""
 
@@ -164,6 +184,9 @@ class Auditor:
                 valid = match is not None and (
                     match.group("ipv4") is None or int(match.group("ipv4")) <= 32
                 ) and (match.group("ipv6") is None or int(match.group("ipv6")) <= 128)
+                if valid and ":" in mechanism:
+                    domain = mechanism.split(":", 1)[1].split("/", 1)[0]
+                    valid = _is_valid_literal_domain(domain)
             elif kind == "ptr":
                 valid = re.fullmatch(r"ptr(?::[a-z0-9.-]+)?", mechanism) is not None
             elif kind == "ip4":
@@ -182,11 +205,9 @@ class Auditor:
                     valid = False
             elif kind in {"include", "exists"}:
                 valid = bool(
-                    separator
-                    and argument
-                    and "." in argument
-                    and re.fullmatch(r"[a-z0-9.-]+", argument)
-                )
+                separator
+                and _is_valid_literal_domain(argument)
+            )
             elif kind == "all":
                 valid = True
             else:
