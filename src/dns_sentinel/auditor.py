@@ -7,7 +7,6 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from dns import name
 import dns.exception
 import dns.resolver
 
@@ -289,17 +288,17 @@ class Auditor:
             tuple(policies),
         )
     def _check_caa(self, name: str) -> Finding:
-        current = name
+        policy_owner = name
+
         while True:
-            rows, error = self._query(current, "CAA")
+            rows, error = self._query(policy_owner, "CAA")
 
             if error and error != "no records":
                 return Finding(
                     "caa",
                     "error",
                     "warning",
-                    f"Could not query CAA records for {current} "
-                    f"while checking {name}: {error}",
+                    f"Could not query CAA records at {policy_owner}: {error}",
                 )
 
             if rows:
@@ -309,14 +308,14 @@ class Auditor:
                         len(parts) != 3
                         or not parts[0].isdigit()
                         or int(parts[0]) > 255
-                        or parts[1].lower() not in {"issue", "issuewild", "iodef"}
+                        or parts[1].lower()
+                        not in {"issue", "issuewild", "iodef"}
                     ):
                         return Finding(
                             "caa",
                             "fail",
                             "error",
-                            f"Malformed CAA record found at {current} "
-                            f"while checking {name} (expected flags tag value).",
+                            "Malformed CAA record (expected flags tag value).",
                             tuple(rows),
                         )
 
@@ -324,20 +323,21 @@ class Auditor:
                     "caa",
                     "pass",
                     "info",
-                    f"CAA records found for {name} at policy owner {current}.",
+                    f"CAA records are present at policy owner {policy_owner}.",
                     tuple(rows),
                 )
 
-            if current == ".":
+            labels = policy_owner.split(".")
+            if len(labels) <= 1:
                 break
 
-            current = current.split(".", 1)[1] if "." in current else "."
+            policy_owner = ".".join(labels[1:])
 
         return Finding(
             "caa",
             "fail",
             "warning",
-            f"No CAA records found for {name} from the queried name to the DNS root.",
+            "No CAA records found; any CA may be authorized by default.",
         )
 
 
