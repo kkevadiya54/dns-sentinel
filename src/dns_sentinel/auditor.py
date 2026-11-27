@@ -326,14 +326,10 @@ class Auditor:
                     f"CAA records are present at policy owner {policy_owner}.",
                     tuple(rows),
                 )
-            if policy_owner == ".":
+            if "." not in policy_owner:
                 break
 
-            policy_owner = (
-                policy_owner.split(".", 1)[1]
-                if "." in policy_owner
-                else "."
-            )
+            policy_owner = policy_owner.split(".", 1)[1]
 
         return Finding(
             "caa",

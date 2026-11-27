@@ -179,7 +179,6 @@ def test_caa_no_policy_to_root() -> None:
         "sub.example.com",
         "example.com",
         "com",
-        ".",
     ]
 
 
