@@ -62,7 +62,11 @@ def test_spf_rejects_malformed_mechanism() -> None:
     a = auditor({("example.com", "TXT"): ['"v=spf1 ip4:not-an-ip -all"']})
     assert a.audit("example.com").findings[0].status == "fail"
 
-
+def test_spf_rejects_numeric_only_tld() -> None:
+    a = auditor(
+        {("example.com", "TXT"): ['"v=spf1 include:example.123 -all"']}
+    )
+    assert a.audit("example.com").findings[0].status == "fail"
 @pytest.mark.parametrize(
     "mechanism,expected",
     [
