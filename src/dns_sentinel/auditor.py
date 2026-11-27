@@ -52,8 +52,12 @@ def normalize_domain(domain: str) -> str:
         raise ValueError("Provide a fully qualified domain name (for example, example.com).")
     labels = ascii_name.split(".")
     if any(
-        not label or len(label) > 63 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
-        for label in labels
+        not label
+        or len(label) > 63
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+        for label in labels[:-1]
+    ) or len(labels[-1]) > 63 or not re.fullmatch(
+        r"[a-z](?:[a-z0-9-]*[a-z0-9])?", labels[-1]
     ):
         raise ValueError("Domain contains an invalid DNS label.")
     return ascii_name
@@ -181,12 +185,11 @@ class Auditor:
                 except ValueError:
                     valid = False
             elif kind in {"include", "exists"}:
-                valid = bool(
-                    separator
-                    and argument
-                    and "." in argument
-                    and re.fullmatch(r"[a-z0-9.-]+", argument)
-                )
+                try:
+                    normalize_domain(argument)
+                    valid = bool(separator)
+                except ValueError:
+                    valid = False
             elif kind == "all":
                 valid = True
             else:
