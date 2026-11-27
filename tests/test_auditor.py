@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any, cast
+
 import dns.exception
 import dns.resolver
 import pytest
@@ -16,16 +19,20 @@ class Answer(list[str]):
 class Resolver:
     def __init__(self, data: dict[tuple[str, str], list[str] | Exception]):
         self.data = data
+        self.queries: list[tuple[str, str]] = []
 
     def resolve(self, name: str, kind: str, **kwargs: object) -> Answer:
+        self.queries.append((name, kind))
         value = self.data.get((name, kind), [])
         if isinstance(value, Exception):
             raise value
         return Answer(value)
 
 
-def auditor(data: dict[tuple[str, str], list[str] | Exception]) -> Auditor:
-    return Auditor(resolver=Resolver(data))
+def auditor(
+    data: Mapping[tuple[str, str], list[str] | Exception],
+) -> Auditor:
+    return Auditor(resolver=Resolver(dict(data)))
 
 
 @pytest.mark.parametrize(
@@ -55,6 +62,7 @@ def test_spf_rejects_malformed_mechanism() -> None:
     a = auditor({("example.com", "TXT"): ['"v=spf1 ip4:not-an-ip -all"']})
     assert a.audit("example.com").findings[0].status == "fail"
 
+
 @pytest.mark.parametrize(
     "mechanism,expected",
     [
@@ -65,13 +73,11 @@ def test_spf_rejects_malformed_mechanism() -> None:
         ("mx:mail.example.com", "pass"),
         ("include:example.com", "pass"),
         ("exists:example.com", "pass"),
-
         # Empty labels and consecutive dots
         ("a:a..example.com", "fail"),
         ("mx:a..example.com", "fail"),
         ("include:a..example.com", "fail"),
         ("exists:a..example.com", "fail"),
-
         # Leading and trailing empty labels
         ("a:.example.com", "fail"),
         ("mx:example.com.", "pass"),
@@ -79,13 +85,11 @@ def test_spf_rejects_malformed_mechanism() -> None:
         ("exists:example.com.", "pass"),
         ("a:example.com.", "pass"),
         ("include:example.com.", "pass"),
-        ],
+    ],
 )
 def test_spf_literal_domain_validation(mechanism: str, expected: str) -> None:
     policy = f"v=spf1 {mechanism} -all"
-    result = auditor(
-        {("example.com", "TXT"): [f'"{policy}"']}
-    ).audit("example.com").findings[0]
+    result = auditor({("example.com", "TXT"): [f'"{policy}"']}).audit("example.com").findings[0]
 
     assert result.status == expected
 
@@ -103,9 +107,7 @@ def test_spf_literal_domain_validation(mechanism: str, expected: str) -> None:
         ("v=spf1 ~exp=errors.example.com -all", "fail"),
     ],
 )
-def test_spf_rejects_out_of_range_prefixes_and_qualifiers(
-    policy: str, expected: str
-) -> None:
+def test_spf_rejects_out_of_range_prefixes_and_qualifiers(policy: str, expected: str) -> None:
     result = auditor({("example.com", "TXT"): [f'"{policy}"']}).audit("example.com").findings[0]
     assert result.status == expected
 
@@ -173,8 +175,8 @@ def test_dnssec_is_explicitly_presence_only() -> None:
 
 def test_dns_errors_do_not_abort_other_checks() -> None:
     data = {
-        ("example.com", "TXT"): dns.resolver.NXDOMAIN(),
-        ("example.com", "CAA"): dns.exception.Timeout(),
+        ("example.com", "TXT"): cast(Any, dns.resolver.NXDOMAIN)(),
+        ("example.com", "CAA"): cast(Any, dns.exception.Timeout)(),
         ("example.com", "NS"): ["ns1.example.net.", "ns2.example.net."],
     }
     findings = auditor(data).audit("example.com").findings
@@ -184,7 +186,11 @@ def test_dns_errors_do_not_abort_other_checks() -> None:
 
 
 @pytest.mark.parametrize(
-    "failure", [dns.resolver.LifetimeTimeout(timeout=1, errors=[]), dns.resolver.NoNameservers()]
+    "failure",
+    [
+        cast(Any, dns.resolver.LifetimeTimeout)(timeout=1, errors=[]),
+        cast(Any, dns.resolver.NoNameservers)(),
+    ],
 )
 def test_resolver_failures_are_reported_as_warnings(failure: Exception) -> None:
     result = auditor({("example.com", "CAA"): failure}).audit("example.com").findings[2]
@@ -194,10 +200,13 @@ def test_resolver_failures_are_reported_as_warnings(failure: Exception) -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    [dns.resolver.NoResolverConfiguration(), OSError("network unreachable")],
+    [
+        cast(Any, dns.resolver.NoResolverConfiguration)(),
+        OSError("network unreachable"),
+    ],
 )
 def test_resolver_config_and_os_errors_warn_and_continue(failure: Exception) -> None:
-    data = {
+    data: dict[tuple[str, str], list[str] | Exception] = {
         ("example.com", "CAA"): failure,
         ("example.com", "NS"): ["ns1.example.net.", "ns2.example.net."],
     }
@@ -231,3 +240,51 @@ def test_report_json_shape() -> None:
     report = auditor({}).audit("example.com")
     assert report.to_dict()["domain"] == "example.com"
     assert len(report.to_dict()["findings"]) == 6
+
+
+def test_caa_inherits_parent_policy() -> None:
+    data: dict[tuple[str, str], list[str] | Exception] = {
+        ("example.com", "CAA"): ['0 issue "letsencrypt.org"'],
+    }
+    resolver = Resolver(data)
+    findings = Auditor(resolver=resolver).audit("sub.example.com").findings
+
+    caa = next(finding for finding in findings if finding.check == "caa")
+
+    assert caa.status == "pass"
+    assert "example.com" in caa.message
+    assert [query for query in resolver.queries if query[1] == "CAA"] == [
+        ("sub.example.com", "CAA"),
+        ("example.com", "CAA"),
+    ]
+
+
+def test_caa_missing_policy_stops_before_root() -> None:
+    resolver = Resolver({})
+    findings = Auditor(resolver=resolver).audit("sub.example.com").findings
+
+    caa = next(finding for finding in findings if finding.check == "caa")
+
+    assert caa.status == "fail"
+    assert [query for query in resolver.queries if query[1] == "CAA"] == [
+        ("sub.example.com", "CAA"),
+        ("example.com", "CAA"),
+        ("com", "CAA"),
+    ]
+
+
+def test_caa_ancestor_lookup_handles_dns_error() -> None:
+    data: dict[tuple[str, str], list[str] | Exception] = {
+        ("example.com", "CAA"): cast(Any, dns.exception.Timeout)(),
+    }
+    resolver = Resolver(data)
+    findings = Auditor(resolver=resolver).audit("sub.example.com").findings
+
+    caa = next(finding for finding in findings if finding.check == "caa")
+
+    assert caa.status == "error"
+    assert "example.com" in caa.message
+    assert [query for query in resolver.queries if query[1] == "CAA"] == [
+        ("sub.example.com", "CAA"),
+        ("example.com", "CAA"),
+    ]

@@ -59,7 +59,6 @@ def normalize_domain(domain: str) -> str:
     return ascii_name
 
 
-
 def _is_valid_literal_domain(domain: str) -> bool:
     """Validate literal SPF domains. Macro expansion is unsupported."""
     if domain.endswith("."):
@@ -69,14 +68,9 @@ def _is_valid_literal_domain(domain: str) -> bool:
 
     labels = domain.split(".")
     return all(
-        bool(
-            label
-            and len(label) <= 63
-            and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
-        )
+        bool(label and len(label) <= 63 and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label))
         for label in labels
     )
-
 
 
 class Auditor:
@@ -147,9 +141,7 @@ class Auditor:
         tokens = spf[0].lower().split()
         if tokens[0] != "v=spf1" or len(tokens) < 2:
             return Finding("spf", "fail", "error", "SPF policy is empty or malformed.", tuple(spf))
-        mechanism_terms = [
-            (t[0], t[1:]) if t[:1] in "+-~?" else ("", t) for t in tokens[1:]
-        ]
+        mechanism_terms = [(t[0], t[1:]) if t[:1] in "+-~?" else ("", t) for t in tokens[1:]]
         mechanisms = [mechanism for _, mechanism in mechanism_terms]
         seen_modifiers: set[str] = set()
         for qualifier, mechanism in mechanism_terms:
@@ -181,9 +173,11 @@ class Auditor:
                     r"(?://(?P<ipv6>[0-9]{1,3}))?",
                     mechanism,
                 )
-                valid = match is not None and (
-                    match.group("ipv4") is None or int(match.group("ipv4")) <= 32
-                ) and (match.group("ipv6") is None or int(match.group("ipv6")) <= 128)
+                valid = (
+                    match is not None
+                    and (match.group("ipv4") is None or int(match.group("ipv4")) <= 32)
+                    and (match.group("ipv6") is None or int(match.group("ipv6")) <= 128)
+                )
                 if valid and ":" in mechanism:
                     domain = mechanism.split(":", 1)[1].split("/", 1)[0]
                     valid = _is_valid_literal_domain(domain)
@@ -204,10 +198,7 @@ class Auditor:
                 except ValueError:
                     valid = False
             elif kind in {"include", "exists"}:
-                valid = bool(
-                separator
-                and _is_valid_literal_domain(argument)
-            )
+                valid = bool(separator and _is_valid_literal_domain(argument))
             elif kind == "all":
                 valid = True
             else:
@@ -310,37 +301,55 @@ class Auditor:
         )
 
     def _check_caa(self, name: str) -> Finding:
-        rows, error = self._query(name, "CAA")
-        if error and error != "no records":
-            return Finding("caa", "error", "warning", f"Could not query CAA records: {error}")
-        if not rows:
-            return Finding(
-                "caa",
-                "fail",
-                "warning",
-                "No CAA records found; any CA may be authorized by default.",
-            )
-        for row in rows:
-            parts = row.split(None, 2)
-            if (
-                len(parts) != 3
-                or not parts[0].isdigit()
-                or int(parts[0]) > 255
-                or parts[1].lower() not in {"issue", "issuewild", "iodef"}
-            ):
+        policy_owner = name
+
+        while True:
+            rows, error = self._query(policy_owner, "CAA")
+
+            if error and error != "no records":
                 return Finding(
                     "caa",
-                    "fail",
                     "error",
-                    "Malformed CAA record (expected flags tag value).",
+                    "warning",
+                    f"Could not query CAA records at {policy_owner}: {error}",
+                )
+
+            if rows:
+                for row in rows:
+                    parts = row.split(None, 2)
+                    if (
+                        len(parts) != 3
+                        or not parts[0].isdigit()
+                        or int(parts[0]) > 255
+                        or parts[1].lower() not in {"issue", "issuewild", "iodef"}
+                    ):
+                        return Finding(
+                            "caa",
+                            "fail",
+                            "error",
+                            "Malformed CAA record (expected flags tag value).",
+                            tuple(rows),
+                        )
+
+                return Finding(
+                    "caa",
+                    "pass",
+                    "info",
+                    f"CAA records are present at policy owner {policy_owner}.",
                     tuple(rows),
                 )
+
+            labels = policy_owner.split(".")
+            if len(labels) <= 1:
+                break
+
+            policy_owner = ".".join(labels[1:])
+
         return Finding(
             "caa",
-            "pass",
-            "info",
-            "CAA records are present and have recognized tags and flags.",
-            tuple(rows),
+            "fail",
+            "warning",
+            "No CAA records found; any CA may be authorized by default.",
         )
 
     def _check_mx(self, name: str) -> Finding:
