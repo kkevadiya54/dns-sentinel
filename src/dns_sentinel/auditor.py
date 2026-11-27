@@ -287,40 +287,57 @@ class Auditor:
             "One DMARC policy with valid version and policy tags was found.",
             tuple(policies),
         )
-
     def _check_caa(self, name: str) -> Finding:
-        rows, error = self._query(name, "CAA")
-        if error and error != "no records":
-            return Finding("caa", "error", "warning", f"Could not query CAA records: {error}")
-        if not rows:
-            return Finding(
-                "caa",
-                "fail",
-                "warning",
-                "No CAA records found; any CA may be authorized by default.",
-            )
-        for row in rows:
-            parts = row.split(None, 2)
-            if (
-                len(parts) != 3
-                or not parts[0].isdigit()
-                or int(parts[0]) > 255
-                or parts[1].lower() not in {"issue", "issuewild", "iodef"}
-            ):
+        policy_owner = name
+
+        while True:
+            rows, error = self._query(policy_owner, "CAA")
+
+            if error and error != "no records":
                 return Finding(
                     "caa",
-                    "fail",
                     "error",
-                    "Malformed CAA record (expected flags tag value).",
+                    "warning",
+                    f"Could not query CAA records at {policy_owner}: {error}",
+                )
+
+            if rows:
+                for row in rows:
+                    parts = row.split(None, 2)
+                    if (
+                        len(parts) != 3
+                        or not parts[0].isdigit()
+                        or int(parts[0]) > 255
+                        or parts[1].lower()
+                        not in {"issue", "issuewild", "iodef"}
+                    ):
+                        return Finding(
+                            "caa",
+                            "fail",
+                            "error",
+                            "Malformed CAA record (expected flags tag value).",
+                            tuple(rows),
+                        )
+
+                return Finding(
+                    "caa",
+                    "pass",
+                    "info",
+                    f"CAA records are present at policy owner {policy_owner}.",
                     tuple(rows),
                 )
+            if "." not in policy_owner:
+                break
+
+            policy_owner = policy_owner.split(".", 1)[1]
+
         return Finding(
             "caa",
-            "pass",
-            "info",
-            "CAA records are present and have recognized tags and flags.",
-            tuple(rows),
+            "fail",
+            "warning",
+            "No CAA records found; any CA may be authorized by default.",
         )
+
 
     def _check_mx(self, name: str) -> Finding:
         rows, error = self._query(name, "MX")
